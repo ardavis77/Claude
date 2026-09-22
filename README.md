@@ -18,8 +18,10 @@ en tu horario real:
 - **Ida - jueves y viernes**: solo vuelos que salen en la tarde (por defecto,
   desde las 12:00), porque esos dias trabajas desde casa y tienes mas
   flexibilidad.
-- **Vuelta**: sin restriccion de horario por defecto (usa
-  `--return-same-schedule` si tambien la quieres limitar a mie/jue-vie-tarde).
+- **Vuelta**: configurable por dia de la semana y hora con `--return-weekdays`
+  / `--return-afternoon-weekdays` (por defecto, sin restriccion — cualquier
+  dia y hora). `--return-same-schedule` es un atajo que le aplica a la vuelta
+  el mismo patron que a la ida.
 
 Los resultados se ordenan del **mas barato al mas caro** (precio total = ida +
 vuelta).
@@ -29,7 +31,24 @@ vuelta).
 > funciona dentro de este entorno de sandbox, que tiene bloqueado el trafico
 > saliente a Google).
 
+## Como conseguir el codigo
+
+Este es un script de **terminal** (no una pagina web), asi que no hay un link
+para "abrirlo" en el navegador. Para usarlo, baja el codigo a tu computadora:
+
+```bash
+git clone https://github.com/ardavis77/Claude.git
+cd Claude
+git checkout claude/flight-search-tool-2maz26
+```
+
+(O, si prefieres no usar git, entra a
+https://github.com/ardavis77/Claude/tree/claude/flight-search-tool-2maz26 y
+descarga el repo como ZIP con el boton verde "Code" > "Download ZIP".)
+
 ## Instalacion
+
+Necesitas Python 3.9 o mas nuevo instalado. Luego:
 
 ```bash
 python3 -m venv venv
@@ -57,10 +76,17 @@ python -m flight_search.search \
   --weeks-ahead 10 \
   --nights 3,4,5 \
   --afternoon-hour 13 \
+  --return-weekdays Dom,Lun \
+  --return-afternoon-weekdays Dom \
   --max-stops 1 \
   --top 30 \
   --csv resultados.csv
 ```
+
+El ejemplo de arriba busca vuelos de vuelta solo domingo o lunes, y si es
+domingo exige que salga en la tarde (para no perder el domingo completo, pero
+sin problema si es lunes en la manana ya que se puede seguir trabajando
+remoto ese dia... ajusta segun tu caso real).
 
 | Opcion | Que hace | Default |
 |---|---|---|
@@ -72,7 +98,10 @@ python -m flight_search.search \
 | `--one-way` | Busca solo el tramo de ida (ignora `--nights`, comportamiento anterior) | desactivado |
 | `--afternoon-hour` | Hora (24h) desde la cual jueves/viernes de ida cuenta como "tarde" | `12` |
 | `--wednesday-afternoon-only` | Tambien restringe los miercoles de ida a la tarde | desactivado (miercoles = todo el dia) |
-| `--return-same-schedule` | Aplica el mismo filtro mie/jue-vie-tarde a la VUELTA | desactivado (vuelta sin restriccion) |
+| `--return-weekdays` | Dias permitidos para la vuelta, ej. `Dom,Lun` (Lun,Mar,Mie,Jue,Vie,Sab,Dom) | sin restriccion |
+| `--return-afternoon-weekdays` | De esos dias, cuales exigen salir en la tarde (usa `--return-afternoon-hour`) | ninguno |
+| `--return-afternoon-hour` | Hora (24h) que cuenta como "tarde" para la vuelta | `12` |
+| `--return-same-schedule` | Atajo: le copia a la vuelta el mismo patron que la ida (Mie cualquier hora, Jue/Vie tarde) | desactivado |
 | `--max-stops` | Maximo de escalas | sin limite |
 | `--seat` | Clase: `economy`, `premium-economy`, `business`, `first` | `economy` |
 | `--currency` | Moneda | `USD` |
@@ -108,7 +137,6 @@ bloquear requests (verás reintentos en la terminal).
 
 ## Siguientes pasos posibles
 
-- Filtrar tambien la vuelta por dia de la semana (no solo por hora).
 - Guardar el historial de precios para detectar cuando bajan.
 - Mandar una alerta (correo/Slack) cuando aparezca un vuelo bajo cierto
   precio.

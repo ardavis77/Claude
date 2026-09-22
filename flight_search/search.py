@@ -44,6 +44,7 @@ ORIGIN_NAMES = {
 }
 
 WEEKDAY_ES = ["Lun", "Mar", "Mie", "Jue", "Vie", "Sab", "Dom"]
+WEEKDAY_NAME_TO_INDEX = {name.lower(): i for i, name in enumerate(WEEKDAY_ES)}
 
 # 0=Lunes ... 6=Domingo
 WEDNESDAY, THURSDAY, FRIDAY = 2, 3, 4
@@ -141,6 +142,21 @@ def departure_allowed(dep: datetime, afternoon_hour: int, wednesday_anytime: boo
     if weekday in (THURSDAY, FRIDAY):
         return dep.hour >= afternoon_hour
     return False
+
+
+def return_allowed(
+    dep: datetime,
+    allowed_weekdays: set[int] | None,
+    afternoon_weekdays: set[int],
+    afternoon_hour: int,
+) -> bool:
+    """Filtro de vuelta: dias permitidos (None = todos) + hora minima en algunos de ellos."""
+    weekday = dep.weekday()
+    if allowed_weekdays is not None and weekday not in allowed_weekdays:
+        return False
+    if weekday in afternoon_weekdays and dep.hour < afternoon_hour:
+        return False
+    return True
 
 
 def search_one_way(
@@ -388,6 +404,22 @@ def parse_nights(value: str) -> list[int]:
     return nights
 
 
+def parse_weekdays(value: str | None) -> set[int] | None:
+    """'Lun,Mar,...' -> {0,1,...}. None o cadena vacia = todos los dias permitidos."""
+    if not value:
+        return None
+    days = set()
+    for part in value.split(","):
+        key = part.strip().lower()
+        if not key:
+            continue
+        if key not in WEEKDAY_NAME_TO_INDEX:
+            valid = ",".join(WEEKDAY_ES)
+            raise argparse.ArgumentTypeError(f"dia invalido {part!r}, usa alguno de: {valid}")
+        days.add(WEEKDAY_NAME_TO_INDEX[key])
+    return days or None
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -444,9 +476,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Restringe tambien los miercoles de ida a la tarde (usa --afternoon-hour)",
     )
     parser.add_argument(
+        "--return-weekdays",
+        type=parse_weekdays,
+        default=None,
+        help="Dias permitidos para la VUELTA, separados por coma (Lun,Mar,Mie,Jue,Vie,Sab,Dom). "
+        "Default: sin restriccion (cualquier dia).",
+    )
+    parser.add_argument(
+        "--return-afternoon-weekdays",
+        type=parse_weekdays,
+        default=None,
+        help="De los dias en --return-weekdays, cuales requieren salir en la tarde "
+        "(usa --return-afternoon-hour). Default: ninguno (toda hora es valida).",
+    )
+    parser.add_argument(
+        "--return-afternoon-hour",
+        type=int,
+        default=12,
+        help="Hora (24h) a partir de la cual la vuelta cuenta como 'tarde' en los dias de "
+        "--return-afternoon-weekdays (default: 12)",
+    )
+    parser.add_argument(
         "--return-same-schedule",
         action="store_true",
-        help="Aplica tambien el filtro mie/jue-vie-tarde al vuelo de VUELTA (default: vuelta sin restriccion)",
+        help="Atajo: aplica a la VUELTA el mismo patron que la ida (Mie cualquier hora, "
+        "Jue/Vie tarde). Equivale a --return-weekdays Mie,Jue,Vie --return-afternoon-weekdays Jue,Vie. "
+        "Se ignora si ya pasaste --return-weekdays.",
     )
     parser.add_argument("--seat", default="economy", help="Clase (default: economy)")
     parser.add_argument(
@@ -461,7 +516,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--retries", type=int, default=2, help="Reintentos por consulta fallida (default: 2)"
     )
     parser.add_argument("--csv", default=None, help="Ruta para exportar todos los resultados a CSV")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+
+    if args.return_same_schedule:
+        if args.return_weekdays is None:
+            args.return_weekdays = {WEDNESDAY, THURSDAY, FRIDAY}
+        if args.return_afternoon_weekdays is None:
+            args.return_afternoon_weekdays = {THURSDAY, FRIDAY}
+        if "--return-afternoon-hour" not in (argv or sys.argv[1:]):
+            args.return_afternoon_hour = args.afternoon_hour
+
+    if args.return_afternoon_weekdays is None:
+        args.return_afternoon_weekdays = set()
+
+    return args
 
 
 def run_one_way(args: argparse.Namespace) -> None:
@@ -514,8 +582,11 @@ def run_round_trip(args: argparse.Namespace) -> None:
     return_dates_by_origin: dict[str, set[date]] = {o: set() for o in origins}
     for d in out_dates:
         for n in args.nights:
+            ret_date = d + timedelta(days=n)
+            if args.return_weekdays is not None and ret_date.weekday() not in args.return_weekdays:
+                continue
             for origin in origins:
-                return_dates_by_origin[origin].add(d + timedelta(days=n))
+                return_dates_by_origin[origin].add(ret_date)
 
     outbound_jobs = [(origin, destination, d) for d in out_dates for origin in origins]
     return_jobs = [
@@ -547,13 +618,19 @@ def run_round_trip(args: argparse.Namespace) -> None:
                 continue
             for n in args.nights:
                 ret_date = d + timedelta(days=n)
+                if args.return_weekdays is not None and ret_date.weekday() not in args.return_weekdays:
+                    continue
                 ret_options = cache.get((destination, origin, ret_date), [])
-                if args.return_same_schedule:
-                    ret_options = [
-                        leg
-                        for leg in ret_options
-                        if departure_allowed(leg.departure, args.afternoon_hour, args.wednesday_anytime)
-                    ]
+                ret_options = [
+                    leg
+                    for leg in ret_options
+                    if return_allowed(
+                        leg.departure,
+                        args.return_weekdays,
+                        args.return_afternoon_weekdays,
+                        args.return_afternoon_hour,
+                    )
+                ]
                 if not ret_options:
                     continue
                 rt_url = build_round_trip_url(origin, destination, d, ret_date, args.seat, args.currency)
